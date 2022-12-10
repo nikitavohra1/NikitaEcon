@@ -1,0 +1,112 @@
+---
+title: "project"
+author: "Meghana Walimbe, Max Krater, Nikita Vohra"
+date: "11/30/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+suppressWarnings(RNGversion("3.5.3"))
+library(caret)
+library(gains)
+library(pROC)
+library(randomForest)
+```
+
+
+```{r}
+cobra <- read.csv("~/Downloads/COBRA-2021.csv")
+head(cobra)
+```
+
+
+**Creating dummy variables*
+```{r}
+cobradf <- data.frame(cobra)
+cobradf["crime"][cobradf["crime"] == "AGG ASSAULT"] <- 1
+cobradf["crime"][cobradf["crime"] == "AUTO THEFT"] <- 0
+cobradf["crime"][cobradf["crime"] == "BURGLARY"] <- 0
+cobradf["crime"][cobradf["crime"] == "HOMICIDE"] <- 1
+cobradf["crime"][cobradf["crime"] == "LARCENY-FROM VEHICLE"] <- 0
+cobradf["crime"][cobradf["crime"] == "LARCENY-NON VEHICLE"] <- 0
+cobradf["crime"][cobradf["crime"] == "ROBBERY"] <- 0
+
+#Create new variable
+cobra$is_lethal_crime <- cobradf$crime
+
+head(cobra)
+```
+
+**Final Dataset**
+
+```{r}
+final_dataset <- cobra[, c("occur_month", "occur_day_num", "occur_hour", "beat", "zone", "lat", "long",  "is_lethal_crime")]
+final_dataset$is_lethal_crime <- as.integer(final_dataset$is_lethal_crime)
+head(final_dataset)
+```
+
+
+```{r}
+final_dataset1 <- scale(final_dataset[1:7])
+final_dataset1 <- data.frame(final_dataset1, final_dataset$is_lethal_crime)
+colnames(final_dataset1)[8] <- "is_lethal_crime"
+final_dataset1$is_lethal_crime <- as.factor(final_dataset1$is_lethal_crime)
+```
+
+
+**K-nearest Neighbor**
+
+```{r}
+set.seed(1)
+myIndex <- createDataPartition(final_dataset1$is_lethal_crime, p=0.6, list = FALSE)
+
+trainSet <- final_dataset1[myIndex,]
+
+validationSet <- final_dataset1[-myIndex,]
+myCtrl <- trainControl(method = "cv", number = 10)
+myGrid <- expand.grid(.k=c(1:10))
+set.seed(1)
+KNN_fit <- train(is_lethal_crime ~., data = trainSet, method = "knn", trControl=myCtrl, tuneGrid = myGrid)
+KNN_fit
+KNN_Class <- predict(KNN_fit, newdata = validationSet)
+confusionMatrix(KNN_Class,validationSet$is_lethal_crime, positive = '1')
+```
+
+```{r}
+KNN_Class_prob <- predict(KNN_fit, newdata = validationSet, type ="prob")
+roc_object<- roc(validationSet$is_lethal_crime, KNN_Class_prob[,2])
+plot.roc(roc_object)
+```
+
+```{r}
+auc(roc_object)
+```
+
+**Ensemble tree model **
+
+```{r}
+bagging_tree <- randomForest(is_lethal_crime ~ ., data=trainSet, ntree= 100, mtry = 3, importance = TRUE)
+varImpPlot(bagging_tree, type=1)
+```
+
+```{r}
+predicted_class <- predict(bagging_tree, validationSet)
+confusionMatrix(predicted_class, validationSet$is_lethal_crime, positive = '1')
+```
+
+**Logistic Regression**
+
+
+```{r}
+trCntl <- trainControl(method = "CV",number = 5)
+glmModel <- train(is_lethal_crime ~ occur_month + occur_day_num + occur_hour + beat + zone + lat + long,data = trainSet,trControl = trCntl,method="glm",family = "binomial")
+summary(glmModel)
+```
+
+
+```{r}
+confusionMatrix(glmModel)
+trainPredicted <- predict(glmModel,validationSet)
+confusionMatrix(trainPredicted,reference=validationSet$is_lethal_crime)
+```
